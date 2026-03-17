@@ -280,7 +280,7 @@ def render_etf_manager(names_map: Dict[str, str]) -> None:
                 c2.caption(ticker)
                 if c3.button("Usuń", key=f"remove_{ticker}", use_container_width=True):
                     remove_ticker(ticker)
-                st.divider()
+                st.markdown("<hr style='margin:4px 0;'>", unsafe_allow_html=True)
         else:
             st.info("Lista ETF-ów jest pusta. Dodaj pierwszy ticker.")
 
