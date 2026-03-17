@@ -273,57 +273,79 @@ def remove_ticker(ticker: str) -> None:
     st.rerun()
 
 
+def render_recent_removed_horizontal() -> None:
+    st.markdown("##### Ostatnio usunięte")
+    removed = st.session_state.recent_removed[:3]
+    if not removed:
+        st.caption("Brak historii usuwania.")
+        return
+
+    cols = st.columns(len(removed))
+    for col, ticker in zip(cols, removed):
+        with col:
+            if st.button(f"↩ {ticker}", key=f"restore_{ticker}", use_container_width=True):
+                add_ticker(ticker)
+
+
 def render_etf_manager(names_map: Dict[str, str]) -> None:
     st.subheader("Lista ETF-ów")
 
-    add_col, search_col = st.columns([1.2, 1])
+    manage_tab, search_tab = st.tabs(["Moja lista", "Wyszukaj i dodaj"])
 
-    with add_col:
-        with st.form("add_ticker_form", clear_on_submit=True):
-            c1, c2 = st.columns([5, 1])
-            ticker_input = c1.text_input("Dodaj ETF po tickerze", placeholder="Np. VWCE.DE, EIMI.L, AGGG.L")
-            submitted = c2.form_submit_button("Dodaj", use_container_width=True)
-            if submitted:
-                add_ticker(ticker_input)
+    with manage_tab:
+        top_left, top_right = st.columns([1.2, 1.8])
 
-    with search_col:
-        query = st.text_input("Wyszukaj ETF po fragmencie nazwy lub tickerze", placeholder="np. world, nasdaq, bond")
-        results = search_catalog(query)
-        if query and results:
-            for ticker, name in results:
-                c1, c2 = st.columns([5, 1])
-                c1.markdown(f"**{name}**  \\n`ticker: {ticker}`")
-                if c2.button("+", key=f"search_add_{ticker}", use_container_width=True):
-                    add_ticker(ticker)
-        elif query:
-            st.caption("Brak wyników w wbudowanym katalogu. Nadal możesz dodać ETF ręcznie po tickerze.")
+        with top_left:
+            with st.form("add_ticker_form", clear_on_submit=True):
+                st.caption("Dodaj ręcznie po tickerze")
+                c1, c2 = st.columns([3.4, 1])
+                ticker_input = c1.text_input(
+                    "Ticker ETF",
+                    label_visibility="collapsed",
+                    placeholder="Np. VWCE.DE",
+                )
+                submitted = c2.form_submit_button("Dodaj", use_container_width=True)
+                if submitted:
+                    add_ticker(ticker_input)
 
-    if st.session_state.tickers:
+        with top_right:
+            render_recent_removed_horizontal()
+
         st.markdown("#### Aktualna lista")
-        for ticker in st.session_state.tickers:
-            name = names_map.get(ticker, FALLBACK_NAMES.get(ticker, ticker))
-            c1, c2 = st.columns([6, 1])
-            c1.markdown(f"**{name}**  \\n`ticker: {ticker}`")
-            if c2.button("Usuń", key=f"remove_{ticker}", use_container_width=True):
-                remove_ticker(ticker)
-    else:
-        st.info("Lista ETF-ów jest pusta. Dodaj pierwszy ticker.")
+        if st.session_state.tickers:
+            for ticker in st.session_state.tickers:
+                name = names_map.get(ticker, FALLBACK_NAMES.get(ticker, ticker))
+                row = st.container(border=True)
+                with row:
+                    c1, c2 = st.columns([6, 1])
+                    with c1:
+                        st.markdown(f"**{name}**")
+                        st.caption(ticker)
+                    with c2:
+                        st.write("")
+                        if st.button("Usuń", key=f"remove_{ticker}", use_container_width=True):
+                            remove_ticker(ticker)
+        else:
+            st.info("Lista ETF-ów jest pusta. Dodaj pierwszy ticker.")
 
-    h1, h2 = st.columns(2)
-    with h1:
-        st.markdown("#### 3 ostatnio dodane")
-        if st.session_state.recent_added:
-            for ticker in st.session_state.recent_added:
-                st.write(f"• {ticker}")
+    with search_tab:
+        st.caption("Wyszukaj po tickerze albo nazwie. Lista w polu poniżej filtruje się podczas wpisywania.")
+        options = [ticker for ticker, _ in ETF_CATALOG]
+        selected = st.selectbox(
+            "Znajdź ETF",
+            options=options,
+            index=None,
+            placeholder="Zacznij wpisywać np. world, nasdaq, bond, VWCE...",
+            format_func=lambda t: f"{t} — {FALLBACK_NAMES.get(t, t)}",
+        )
+        c1, c2 = st.columns([5, 1])
+        if selected:
+            c1.markdown(f"**{FALLBACK_NAMES.get(selected, selected)}**")
+            c1.caption(selected)
         else:
-            st.caption("Brak historii dodawania.")
-    with h2:
-        st.markdown("#### 3 ostatnio usunięte")
-        if st.session_state.recent_removed:
-            for ticker in st.session_state.recent_removed:
-                st.write(f"• {ticker}")
-        else:
-            st.caption("Brak historii usuwania.")
+            c1.write("")
+        if c2.button("Dodaj do listy", key="search_add_selected", use_container_width=True, disabled=selected is None):
+            add_ticker(selected)
 
 
 def render_best_etf(best_row: pd.Series) -> None:
