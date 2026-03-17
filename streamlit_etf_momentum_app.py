@@ -65,13 +65,13 @@ ETF_CATALOG: List[Tuple[str, str]] = [
 ]
 
 PERIOD_OPTIONS = {
-    "1 month": ("1mo", 30),
-    "3 months": ("3mo", 90),
-    "6 months": ("6mo", 180),
-    "1 year": ("1y", 365),
-    "2 years": ("2y", 730),
-    "3 years": ("3y", 1095),
-    "5 years": ("5y", 1825),
+    "1 month": 30,
+    "3 months": 90,
+    "6 months": 180,
+    "1 year": 365,
+    "2 years": 730,
+    "3 years": 1095,
+    "5 years": 1825,
 }
 
 MOMENTUM_LOOKBACK_OPTIONS = {
@@ -100,7 +100,6 @@ def resolve_name(ticker: str) -> str:
     ticker = ticker.upper().strip()
     if ticker in FALLBACK_NAMES:
         return FALLBACK_NAMES[ticker]
-
     try:
         t = yf.Ticker(ticker)
         info = {}
@@ -108,34 +107,18 @@ def resolve_name(ticker: str) -> str:
             info = t.get_info() or {}
         except Exception:
             info = getattr(t, "info", {}) or {}
-
-        for key in (
-            "longName",
-            "shortName",
-            "displayName",
-            "name",
-            "fundFamily",
-        ):
+        for key in ("longName", "shortName", "displayName", "name", "fundFamily"):
             value = info.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
     except Exception:
         pass
-
     return FALLBACK_NAMES.get(ticker, ticker)
 
 
-@st.cache_data(show_spinner=False)
-def search_catalog(query: str) -> List[Tuple[str, str]]:
-    q = query.strip().lower()
-    if not q:
-        return []
-    results = []
-    for ticker, name in ETF_CATALOG:
-        hay = f"{ticker} {name}".lower()
-        if q in hay:
-            results.append((ticker, name))
-    return results[:10]
+def calc_download_days(chart_days: int, required_trading_days: int) -> int:
+    trading_to_calendar = int(required_trading_days * 1.7)
+    return max(chart_days, trading_to_calendar) + 120
 
 
 @st.cache_data(show_spinner=False)
@@ -144,8 +127,7 @@ def download_prices(tickers: Tuple[str, ...], chart_days: int, required_days: in
     names: Dict[str, str] = {}
     series_list = []
 
-    extra_buffer = 60
-    period_days = max(chart_days, required_days + extra_buffer)
+    period_days = calc_download_days(chart_days, required_days)
     start = pd.Timestamp.today().normalize() - pd.Timedelta(days=period_days)
 
     for ticker in tickers:
@@ -165,8 +147,7 @@ def download_prices(tickers: Tuple[str, ...], chart_days: int, required_days: in
             warnings.append(f"Brak danych dla {ticker}.")
             continue
 
-        name = resolve_name(ticker)
-        names[ticker] = name
+        names[ticker] = resolve_name(ticker)
         close = data["Close"].copy()
         close.name = ticker
         series_list.append(close)
@@ -183,19 +164,12 @@ def normalize_prices(prices: pd.DataFrame, base: float = 100.0) -> pd.DataFrame:
     return prices.div(prices.iloc[0]).mul(base)
 
 
-def calculate_chart_returns(prices: pd.DataFrame) -> pd.Series:
-    returns = prices.iloc[-1] / prices.iloc[0] - 1
-    return returns
-
-
 def calculate_momentum_scores(prices: pd.DataFrame, lookback_days: int, skip_days: int) -> Tuple[pd.Series, str]:
     needed = lookback_days + skip_days + 1
     if len(prices) < needed:
         raise ValueError(f"Za mało danych do obliczenia momentum. Potrzeba co najmniej {needed} sesji.")
-
     end_idx = -1 - skip_days if skip_days > 0 else -1
     start_idx = end_idx - lookback_days
-
     past_prices = prices.iloc[start_idx]
     recent_prices = prices.iloc[end_idx]
     momentum = recent_prices / past_prices - 1
@@ -203,15 +177,9 @@ def calculate_momentum_scores(prices: pd.DataFrame, lookback_days: int, skip_day
     return momentum.sort_values(ascending=False), window
 
 
-def build_summary_table(
-    prices: pd.DataFrame,
-    momentum_scores: pd.Series,
-    names: Dict[str, str],
-    momentum_window: str,
-) -> pd.DataFrame:
+def build_summary_table(prices: pd.DataFrame, momentum_scores: pd.Series, names: Dict[str, str], momentum_window: str) -> pd.DataFrame:
     latest = prices.iloc[-1]
     total_return = prices.iloc[-1] / prices.iloc[0] - 1
-
     summary = pd.DataFrame({
         "Ticker": prices.columns,
         "Name": [names.get(t, t) for t in prices.columns],
@@ -245,13 +213,10 @@ def init_state() -> None:
     if "tickers" not in st.session_state:
         query_tickers = parse_csv_param(st.query_params.get("tickers"))
         st.session_state.tickers = query_tickers or DEFAULT_TICKERS.copy()
-
     if "recent_added" not in st.session_state:
         st.session_state.recent_added = parse_csv_param(st.query_params.get("added"))[:3]
-
     if "recent_removed" not in st.session_state:
         st.session_state.recent_removed = parse_csv_param(st.query_params.get("removed"))[:3]
-
     sync_query_params()
 
 
@@ -274,12 +239,10 @@ def remove_ticker(ticker: str) -> None:
 
 
 def render_recent_removed_horizontal() -> None:
-    st.markdown("##### Ostatnio usunięte")
     removed = st.session_state.recent_removed[:3]
     if not removed:
-        st.caption("Brak historii usuwania.")
+        st.caption("Brak ostatnio usuniętych.")
         return
-
     cols = st.columns(len(removed))
     for col, ticker in zip(cols, removed):
         with col:
@@ -289,16 +252,13 @@ def render_recent_removed_horizontal() -> None:
 
 def render_etf_manager(names_map: Dict[str, str]) -> None:
     st.subheader("Lista ETF-ów")
-
     manage_tab, search_tab = st.tabs(["Moja lista", "Wyszukaj i dodaj"])
 
     with manage_tab:
         top_left, top_right = st.columns([1.2, 1.8])
-
         with top_left:
             with st.form("add_ticker_form", clear_on_submit=True):
-                st.caption("Dodaj ręcznie po tickerze")
-                c1, c2 = st.columns([3.4, 1])
+                c1, c2 = st.columns([2.2, 1])
                 ticker_input = c1.text_input(
                     "Ticker ETF",
                     label_visibility="collapsed",
@@ -307,29 +267,24 @@ def render_etf_manager(names_map: Dict[str, str]) -> None:
                 submitted = c2.form_submit_button("Dodaj", use_container_width=True)
                 if submitted:
                     add_ticker(ticker_input)
-
         with top_right:
+            st.caption("Ostatnio usunięte")
             render_recent_removed_horizontal()
 
         st.markdown("#### Aktualna lista")
         if st.session_state.tickers:
             for ticker in st.session_state.tickers:
                 name = names_map.get(ticker, FALLBACK_NAMES.get(ticker, ticker))
-                row = st.container(border=True)
-                with row:
-                    c1, c2 = st.columns([6, 1])
-                    with c1:
-                        st.markdown(f"**{name}**")
-                        st.caption(ticker)
-                    with c2:
-                        st.write("")
-                        if st.button("Usuń", key=f"remove_{ticker}", use_container_width=True):
-                            remove_ticker(ticker)
+                c1, c2, c3 = st.columns([5.5, 1.2, 1.1], vertical_alignment="center")
+                c1.markdown(f"**{name}**")
+                c2.caption(ticker)
+                if c3.button("Usuń", key=f"remove_{ticker}", use_container_width=True):
+                    remove_ticker(ticker)
+                st.divider()
         else:
             st.info("Lista ETF-ów jest pusta. Dodaj pierwszy ticker.")
 
     with search_tab:
-        st.caption("Wyszukaj po tickerze albo nazwie. Lista w polu poniżej filtruje się podczas wpisywania.")
         options = [ticker for ticker, _ in ETF_CATALOG]
         selected = st.selectbox(
             "Znajdź ETF",
@@ -342,8 +297,6 @@ def render_etf_manager(names_map: Dict[str, str]) -> None:
         if selected:
             c1.markdown(f"**{FALLBACK_NAMES.get(selected, selected)}**")
             c1.caption(selected)
-        else:
-            c1.write("")
         if c2.button("Dodaj do listy", key="search_add_selected", use_container_width=True, disabled=selected is None):
             add_ticker(selected)
 
@@ -363,19 +316,14 @@ def main() -> None:
     with st.sidebar:
         st.header("Ustawienia")
         chart_period_label = st.selectbox("Zakres wykresu", list(PERIOD_OPTIONS.keys()), index=3)
-        chart_period, chart_days = PERIOD_OPTIONS[chart_period_label]
-
+        chart_days = PERIOD_OPTIONS[chart_period_label]
         lookback_label = st.selectbox("Lookback momentum", list(MOMENTUM_LOOKBACK_OPTIONS.keys()), index=3)
         lookback_days = MOMENTUM_LOOKBACK_OPTIONS[lookback_label]
-
         skip_label = st.selectbox("Pomijaj ostatni okres", list(SKIP_OPTIONS.keys()), index=2)
         skip_days = SKIP_OPTIONS[skip_label]
-
         base_value = st.number_input("Wartość startowa do normalizacji wykresu", min_value=1.0, value=100.0, step=1.0)
         st.markdown("---")
-        st.markdown(
-            "**Wskazówka:** tickery muszą być zgodne z Yahoo Finance, np. `VWCE.DE`, `EIMI.L`, `AGGG.L`, `EUNL.DE`."
-        )
+        st.markdown("**Wskazówka:** tickery muszą być zgodne z Yahoo Finance, np. `VWCE.DE`, `EIMI.L`, `AGGG.L`, `EUNL.DE`.")
 
     tickers = tuple(dict.fromkeys([t.strip().upper() for t in st.session_state.tickers if t.strip()]))
     st.session_state.tickers = list(tickers)
@@ -387,12 +335,10 @@ def main() -> None:
         return
 
     required_days = lookback_days + skip_days + 1
-
     with st.spinner("Pobieram dane i nazwy ETF-ów..."):
         result = download_prices(tickers, chart_days=chart_days, required_days=required_days)
 
     names_map = {ticker: result.names.get(ticker, FALLBACK_NAMES.get(ticker, ticker)) for ticker in tickers}
-
     render_etf_manager(names_map)
 
     for warning in result.warnings:
@@ -409,10 +355,11 @@ def main() -> None:
         st.error(str(exc))
         return
 
-    # Show only the selected chart window while keeping a longer download window internally.
-    chart_prices = prices.iloc[-min(len(prices), required_days + chart_days):].copy()
-    approx_rows = min(len(chart_prices), max(30, round(chart_days / 365 * 252)))
-    chart_prices = chart_prices.iloc[-approx_rows:]
+    chart_calendar_days = PERIOD_OPTIONS[chart_period_label]
+    chart_start = prices.index.max() - pd.Timedelta(days=chart_calendar_days)
+    chart_prices = prices.loc[prices.index >= chart_start].copy()
+    if len(chart_prices) < 20:
+        chart_prices = prices.copy()
 
     normalized = normalize_prices(chart_prices, base=base_value)
     summary = build_summary_table(chart_prices, momentum_scores, names_map, momentum_window)
@@ -449,7 +396,7 @@ def main() -> None:
 
     st.info(
         f"Dane do wykresu: {chart_period_label}. Momentum liczone na podstawie {lookback_label.lower()}, "
-        f"z pominięciem {skip_label.lower()}. Aplikacja automatycznie pobiera szerszy zakres historii, "
+        f"z pominięciem {skip_label.lower()}. Aplikacja pobiera dłuższą historię niż sam wykres, "
         f"żeby uniknąć błędów z brakiem danych."
     )
 
